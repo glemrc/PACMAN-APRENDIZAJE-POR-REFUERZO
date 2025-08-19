@@ -267,6 +267,72 @@ def save_video(frames, filename, fps=25):
         print("❌ OpenCV no disponible para guardar video")
     except Exception as e:
         print(f"❌ Error al guardar video: {e}")
+def record_best_episode_fast(model_path, episodes=10, video_filename="best_pacman_episode.mp4"):
+    """
+    Encuentra el episodio con la mejor puntuación y lo graba en video (versión rápida).
+    """
+    best_score = -float('inf')
+    best_frames = []
+
+    # Configuración
+    config = DeviceConfig.get_config_for_device('cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Crear entorno para obtener número de acciones
+    env = gym.make('ALE/MsPacman-v5', render_mode='rgb_array')
+    n_actions = env.action_space.n
+    env.close()
+    
+    # Cargar agente
+    agent = DQNAgent(
+        state_shape=config.INPUT_SHAPE,
+        n_actions=n_actions,
+        config=config,
+        device=device
+    )
+    if not agent.load_model(model_path):
+        print("❌ Error al cargar el modelo")
+        return
+    agent.set_eval_mode()
+    
+    # Evaluar episodios
+    for ep in range(episodes):
+        print(f"🎮 Jugando episodio {ep+1}/{episodes}...")
+        frames = []
+        env = gym.make('ALE/MsPacman-v5', render_mode='rgb_array')
+        frame_stack = FrameStack(config.FRAME_STACK)
+
+        raw_state, info = env.reset()
+        processed_frame = preprocess_frame(raw_state)
+        state = frame_stack.reset(processed_frame)
+
+        done = False
+        episode_reward = 0
+
+        while not done:
+            action = agent.act(state, training=False)
+            next_raw_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+
+            next_processed_frame = preprocess_frame(next_raw_state)
+            state = frame_stack.step(next_processed_frame)
+
+            frames.append(env.render())
+            episode_reward += reward
+
+        env.close()
+        print(f"   Puntuación episodio {ep+1}: {episode_reward}")
+
+        if episode_reward > best_score:
+            best_score = episode_reward
+            best_frames = frames
+
+    # Guardar video del mejor episodio
+    if best_frames:
+        save_video(best_frames, video_filename)
+        print(f"🏆 Mejor episodio grabado con {best_score} puntos: {video_filename}")
+    else:
+        print("❌ No se generaron frames para guardar.")
 
 def main():
     """Función principal del script de testing"""
@@ -278,10 +344,14 @@ def main():
     parser.add_argument('--no-render', action='store_true', help='No mostrar visualización')
     parser.add_argument('--benchmark', action='store_true', help='Ejecutar benchmark')
     parser.add_argument('--record', action='store_true', help='Grabar video')
+    parser.add_argument('--best', action='store_true', help='Grabar solo el mejor episodio')  # NUEVO
     
     args = parser.parse_args()
     
-    if args.benchmark:
+    if args.best:
+        # Graba solo el episodio con la mejor puntuación
+        record_best_episode_fast(model_path=args.model, episodes=args.episodes)
+    elif args.benchmark:
         benchmark_agent(args.model, episodes=50)
     else:
         test_trained_agent(
@@ -293,3 +363,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
